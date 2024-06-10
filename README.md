@@ -8,10 +8,13 @@ This plugin has been created for managing the design system of the public mobili
 ## Flow
 The design system is structured in multiple layers.
 1. Base layer
+   
   _The base layer defines color palettes and other scales that are not used directly, but define a coherent system of colors and values that will be used to define the rest of the design system._  
 2. Semantic layer
+
   _The sementic layer adds meaning to the variables from the `Base layer`. Semantic variables always reference to a variable in the base layer. Semantic variables are exported and will be used in implementations of products._
 3. Implementation layer
+
   _Using this plugin, variables are exported from Figma and imported into a Node project. [Amazon's Style Dictionary project](https://amzn.github.io/style-dictionary/) can parse these files and format them in any desired format, such as CSS Custom Properties of TypeScript variables. These variables can then be used directly in your web or native project._
 
 <img width="3184" alt="Flow of the design system, from color definition, definition of meaning for those colors and the use of those colors." src="https://github.com/TromsFylkestrafikk/figma-design-tokens/assets/162139399/bdd81e95-2704-4025-81db-7ab43872d94c">
@@ -21,7 +24,7 @@ Collections are a way to structure a group of variables in Figma. Each layer in 
 
 <img width="156" alt="Collections in Figma named base colors, colors, border, spacing and typography." src="https://github.com/TromsFylkestrafikk/figma-design-tokens/assets/162139399/69ec42b8-4a7a-4fce-babe-15ccbea52ed9">
 
-### Base Colors
+### Base colors
 This collection contains the color palette for each organization. It defines all shades of the colors in the palette, such as grey, orange, etcetera. 
 
 <img width="843" alt="Color collection in Figma defining HEX values for the used color palette." src="https://github.com/TromsFylkestrafikk/figma-design-tokens/assets/162139399/7cfd4b50-5dc1-4622-afd3-95d7ac5f039f">
