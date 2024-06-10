@@ -7,12 +7,15 @@ This plugin has been created for managing the design system of the public mobili
 
 ## Flow
 The design system is structured in multiple layers.
+
 1. Base layer
    
   _The base layer defines color palettes and other scales that are not used directly, but define a coherent system of colors and values that will be used to define the rest of the design system._  
+  
 2. Semantic layer
 
   _The sementic layer adds meaning to the variables from the `Base layer`. Semantic variables always reference to a variable in the base layer. Semantic variables are exported and will be used in implementations of products._
+  
 3. Implementation layer
 
   _Using this plugin, variables are exported from Figma and imported into a Node project. [Amazon's Style Dictionary project](https://amzn.github.io/style-dictionary/) can parse these files and format them in any desired format, such as CSS Custom Properties of TypeScript variables. These variables can then be used directly in your web or native project._
