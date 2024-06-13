@@ -12,9 +12,10 @@ figma.showUI(__html__);
 const KEY_PREFIX_COLLECTION = '';
 
 type DesignTokenType = 'color' | 'number'
+interface CompositeToken { [key: string]: DesignToken["value"] }
 type DesignToken = {
-  $type: DesignTokenType
-  $value: string | number | boolean | RGB
+  type: DesignTokenType
+  value: string | number | boolean | RGB | CompositeToken
 }
 
 type Tree = DesignToken | { [key: string]: Tree };
@@ -57,6 +58,16 @@ function sanitizeName(name: string) {
 }
 
 /**
+ * Checks if the name of a collection, group or variable is private.
+ *
+ * @param group Name of group
+ * @returns True if private
+ */
+function isPrivate(group: string) {
+  return group.startsWith('_');
+}
+
+/**
  * Map Figma ids to names of variables and collections
  *
  * @param nodesWithNames Collection of variables
@@ -86,35 +97,60 @@ function uniqueKeyIdMaps<T extends Pick<VariableCollection, 'name'>, K extends k
  *
  * @param value Value of the current variable
  * @param resolvedType Type of current variable
- * @param collectionIdToKeyMap Get the name of the current collection
  * @returns Value of the variable in Design Token (W3C) standard
  */
 async function valueToJSON(
   value: VariableValue,
   resolvedType: VariableResolvedDataType,
-  collectionIdToKeyMap: Record<string, string>,
 ) {
   const isAlias = (
     v: VariableValue,
   ): v is VariableAlias => !!(v as VariableAlias).type && !!(v as VariableAlias).id;
 
+  const isForeground = (
+    { name }: Variable
+  ): Boolean => !!name.match(/^Foreground\/(Dark|Light)\/Primary$/)
+
+  const isColorPalette = (
+    { name }: Variable
+  ): Boolean => !!name.match(/^[A-Za-z]+\/\d+\/Background$/)
+
   if (isAlias(value)) {
     const variable = (await figma.variables.getVariableByIdAsync(value.id))!;
-    const prefix = collectionIdToKeyMap[variable.variableCollectionId];
-    return `{${prefix}.${variable.name.replace(/\//g, '.')}}`;
+    const alias = `{${variable.name.replace(/\//g, '.')}}`
+
+    // Create composite token for foreground colors
+    if (isForeground(variable)) {
+      return {
+        Primary: alias,
+        Secondary: alias.replace('Primary', 'Secondary'),
+        Disabled: alias.replace('Primary', 'Disabled')
+      } as CompositeToken
+    }
+
+    // Create composite token for color palette
+    if (isColorPalette(variable)) {
+      const alias = `{${variable.name.replace(/\//g, '.')}}`
+
+      return {
+        Background: alias,
+        Foreground: alias.replace('Background', 'Foreground')
+      } as CompositeToken
+    }
+
+    return alias;
   }
+
   return resolvedType === 'COLOR' ? rgbToHex(value as RGBA) : value;
 }
 
 /**
  * Converts collection to Design Token (W3C) standard
  *
- * @param collectionIdToKeyMap Get the name of the current collection
  * @param collection The variable collection to export
  * @returns The collection in the Design Token (W3C) format
  */
 async function collectionAsJSON(
-  collectionIdToKeyMap: Record<string, string>,
   { modes, variableIds }: VariableCollection,
 ) {
   const collection: Record<string, Tree> = {};
@@ -125,7 +161,7 @@ async function collectionAsJSON(
     collection[mode] = collection[mode] || {};
   });
 
-  for (const variableId of variableIds) {
+  variables: for (const variableId of variableIds) {
     const {
       name,
       resolvedType,
@@ -137,14 +173,17 @@ async function collectionAsJSON(
       const value = valuesByMode[keyToId[mode]];
 
       if (value !== undefined && ['COLOR', 'FLOAT'].includes(resolvedType)) {
-        name.split('/').forEach((groupName) => {
+        const groups = name.split('/');
+        if (groups.some((group) => isPrivate(group))) continue variables;
+
+        groups.forEach((groupName) => {
           obj = obj as Node;
           obj[groupName] = obj[groupName] || {};
           obj = obj[groupName];
         });
 
-        obj.$type = resolvedType === 'COLOR' ? 'color' : 'number';
-        obj.$value = await valueToJSON(value, resolvedType, collectionIdToKeyMap);
+        obj.type = resolvedType === 'COLOR' ? 'color' : 'number';
+        obj.value = await valueToJSON(value, resolvedType);
       }
     }
   }
@@ -202,7 +241,12 @@ async function exportToJSON() {
   const { idToKey } = uniqueKeyIdMaps(collections, 'id', KEY_PREFIX_COLLECTION);
 
   for (const collection of collections) {
-    tree[idToKey[collection.id]] = await collectionAsJSON(idToKey, collection);
+    const name = idToKey[collection.id];
+
+    // Skip this collection if private
+    if (isPrivate(name)) continue;
+
+    tree[name] = await collectionAsJSON(collection);
   }
 
   exportFiles(tree);
