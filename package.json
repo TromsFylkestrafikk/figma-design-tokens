@@ -38,6 +38,7 @@
       "no-labels": "off",
       "no-continue": "off",
       "no-console": "off",
+      "no-underscore-dangle": "off",
       "@typescript-eslint/no-unused-vars": [
         "error",
         {

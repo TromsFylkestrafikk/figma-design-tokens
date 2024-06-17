@@ -12,10 +12,9 @@ figma.showUI(__html__);
 const KEY_PREFIX_COLLECTION = '';
 
 type DesignTokenType = 'color' | 'number'
-interface CompositeToken { [key: string]: DesignToken["value"] }
 type DesignToken = {
   type: DesignTokenType
-  value: string | number | boolean | RGB | CompositeToken
+  value: string | number | boolean | RGB
 }
 
 type Tree = DesignToken | { [key: string]: Tree };
@@ -96,52 +95,78 @@ function uniqueKeyIdMaps<T extends Pick<VariableCollection, 'name'>, K extends k
  * Convert single variable to Design Token (W3C) standard
  *
  * @param value Value of the current variable
- * @param resolvedType Type of current variable
+ * @param type Type of current variable
  * @returns Value of the variable in Design Token (W3C) standard
  */
 async function valueToJSON(
+  name: string,
   value: VariableValue,
-  resolvedType: VariableResolvedDataType,
-) {
+  type: VariableResolvedDataType,
+): Promise<Tree> {
   const isAlias = (
     v: VariableValue,
   ): v is VariableAlias => !!(v as VariableAlias).type && !!(v as VariableAlias).id;
 
   const isForeground = (
-    { name }: Variable
-  ): Boolean => !!name.match(/^Foreground\/(Dark|Light)\/Primary$/)
+    { name: _name }: Variable,
+  ): boolean => !!_name.match(/^Foreground\/(Dark|Light)\/(Primary|Secondary|Disabled)$/);
 
   const isColorPalette = (
-    { name }: Variable
-  ): Boolean => !!name.match(/^[A-Za-z]+\/\d+\/Background$/)
+    { name: _name }: Variable,
+  ): boolean => !!_name.match(/^[A-Za-z]+\/\d+\/Background$/);
+
+  let _value: Tree;
+  const _type = (type === 'COLOR' ? 'color' : 'number') as DesignTokenType;
 
   if (isAlias(value)) {
     const variable = (await figma.variables.getVariableByIdAsync(value.id))!;
-    const alias = `{${variable.name.replace(/\//g, '.')}}`
+    const alias = `{${variable.name.replace(/\//g, '.')}}`;
+
+    _value = {
+      value: alias,
+      type: _type,
+    };
 
     // Create composite token for foreground colors
     if (isForeground(variable)) {
-      return {
-        Primary: alias,
-        Secondary: alias.replace('Primary', 'Secondary'),
-        Disabled: alias.replace('Primary', 'Disabled')
-      } as CompositeToken
+      _value = {
+        Primary: {
+          value: alias,
+          type: _type,
+        },
+        Secondary: {
+          value: alias.replace('Primary', 'Secondary'),
+          type: _type,
+        },
+        Disabled: {
+          value: alias.replace('Primary', 'Disabled'),
+          type: _type,
+        },
+      };
     }
 
     // Create composite token for color palette
-    if (isColorPalette(variable)) {
-      const alias = `{${variable.name.replace(/\//g, '.')}}`
-
-      return {
-        Background: alias,
-        Foreground: alias.replace('Background', 'Foreground')
-      } as CompositeToken
+    if (isColorPalette(variable) && !isForeground({ name } as Variable)) {
+      _value = {
+        Background: {
+          value: alias,
+          type: _type,
+        },
+        Foreground: {
+          value: alias.replace('Background', 'Foreground'),
+          type: _type,
+        },
+      };
     }
-
-    return alias;
+  } else {
+    // No alias, but a direct value
+    _value = {
+      value: type === 'COLOR' ? rgbToHex(value as RGBA) : value as string,
+      type: _type,
+    };
   }
 
-  return resolvedType === 'COLOR' ? rgbToHex(value as RGBA) : value;
+  return _value;
 }
 
 /**
@@ -182,8 +207,9 @@ async function collectionAsJSON(
           obj = obj[groupName];
         });
 
-        obj.type = resolvedType === 'COLOR' ? 'color' : 'number';
-        obj.value = await valueToJSON(value, resolvedType);
+        const json = await valueToJSON(name, value, resolvedType);
+        obj.type = json.type;
+        obj.value = json.value;
       }
     }
   }
