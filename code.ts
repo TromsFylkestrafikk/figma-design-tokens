@@ -5,7 +5,7 @@
  *
  */
 console.clear();
-console.log('------------------- Console cleared by Export Design Tokens (W3C) -------------------');
+console.log('------------------- Console cleared by Design Tokens (W3C) Export -------------------');
 
 figma.showUI(__html__);
 
@@ -14,11 +14,13 @@ const KEY_PREFIX_COLLECTION = '';
 type DesignTokenType = 'color' | 'number'
 type DesignToken = {
   type: DesignTokenType
-  value: string | number | boolean | RGB
-}
+  value: string | number | boolean | RGB | CompositeToken
+  }
+interface CompositeToken { [key: string]: DesignToken['value'] }
+type Token = DesignToken | CompositeToken
 
-type Tree = DesignToken | { [key: string]: Tree };
-type Node = Exclude<Tree, DesignToken>
+type Tree = Token | { [key: string]: Tree };
+type Node = Exclude<Tree, Token>
 
 /**
  * Converts an RGB(a) value to HEX
@@ -59,11 +61,11 @@ function sanitizeName(name: string) {
 /**
  * Checks if the name of a collection, group or variable is private.
  *
- * @param group Name of group
+ * @param collection Name of the collection
  * @returns True if private
  */
-function isPrivate(group: string) {
-  return group.startsWith('_');
+function isPrivate(collection: string) {
+  return collection.startsWith('_');
 }
 
 /**
@@ -94,6 +96,7 @@ function uniqueKeyIdMaps<T extends Pick<VariableCollection, 'name'>, K extends k
 /**
  * Convert single variable to Design Token (W3C) standard
  *
+ * @param name Name of the current variable
  * @param value Value of the current variable
  * @param type Type of current variable
  * @returns Value of the variable in Design Token (W3C) standard
@@ -102,7 +105,7 @@ async function valueToJSON(
   name: string,
   value: VariableValue,
   type: VariableResolvedDataType,
-): Promise<Tree> {
+): Promise<DesignToken['value']> {
   const isAlias = (
     v: VariableValue,
   ): v is VariableAlias => !!(v as VariableAlias).type && !!(v as VariableAlias).id;
@@ -115,55 +118,36 @@ async function valueToJSON(
     { name: _name }: Variable,
   ): boolean => !!_name.match(/^[A-Za-z]+\/\d+\/Background$/);
 
-  let _value: Tree;
-  const _type = (type === 'COLOR' ? 'color' : 'number') as DesignTokenType;
+  let _value: DesignToken['value'];
 
+  // If the variable is a reference to another variable
   if (isAlias(value)) {
+    // Get the referenced variable
     const variable = (await figma.variables.getVariableByIdAsync(value.id))!;
     const alias = `{${variable.name.replace(/\//g, '.')}}`;
 
-    _value = {
-      value: alias,
-      type: _type,
-    };
+    _value = alias;
 
-    // Create composite token for foreground colors
+    // Expand the referenced variable if it is a foreground variable
     if (isForeground(variable)) {
       _value = {
-        Primary: {
-          value: alias,
-          type: _type,
-        },
-        Secondary: {
-          value: alias.replace('Primary', 'Secondary'),
-          type: _type,
-        },
-        Disabled: {
-          value: alias.replace('Primary', 'Disabled'),
-          type: _type,
-        },
+        Primary: alias,
+        Secondary: alias.replace('Primary', 'Secondary'),
+        Disabled: alias.replace('Primary', 'Disabled'),
       };
     }
 
-    // Create composite token for color palette
+    // Expand the referenced variable if it is a reference to the color palette
+    // If the current variable is a foreground color, do not expand it to avoid circular references
     if (isColorPalette(variable) && !isForeground({ name } as Variable)) {
       _value = {
-        Background: {
-          value: alias,
-          type: _type,
-        },
-        Foreground: {
-          value: alias.replace('Background', 'Foreground'),
-          type: _type,
-        },
+        Background: alias,
+        Foreground: alias.replace('Background', 'Foreground'),
       };
     }
   } else {
-    // No alias, but a direct value
-    _value = {
-      value: type === 'COLOR' ? rgbToHex(value as RGBA) : value as string,
-      type: _type,
-    };
+    // Return an actual value if the variable is not a reference
+    _value = type === 'COLOR' ? rgbToHex(value as RGBA) : value as string;
   }
 
   return _value;
@@ -207,9 +191,8 @@ async function collectionAsJSON(
           obj = obj[groupName];
         });
 
-        const json = await valueToJSON(name, value, resolvedType);
-        obj.type = json.type;
-        obj.value = json.value;
+        obj.value = await valueToJSON(name, value, resolvedType);
+        obj.type = (resolvedType === 'COLOR' ? 'color' : 'number') as DesignTokenType;
       }
     }
   }
