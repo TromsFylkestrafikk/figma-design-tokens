@@ -5,7 +5,7 @@
  *
  */
 console.clear();
-console.log('------------------- Console cleared by Export Design Tokens (W3C) -------------------');
+console.log('------------------- Console cleared by Design Tokens (W3C) Export -------------------');
 
 figma.showUI(__html__);
 
@@ -13,12 +13,14 @@ const KEY_PREFIX_COLLECTION = '';
 
 type DesignTokenType = 'color' | 'number'
 type DesignToken = {
-  $type: DesignTokenType
-  $value: string | number | boolean | RGB
-}
+  type: DesignTokenType
+  value: string | number | boolean | RGB | CompositeToken
+  }
+interface CompositeToken { [key: string]: DesignToken['value'] }
+type Token = DesignToken | CompositeToken
 
-type Tree = DesignToken | { [key: string]: Tree };
-type Node = Exclude<Tree, DesignToken>
+type Tree = Token | { [key: string]: Tree };
+type Node = Exclude<Tree, Token>
 
 /**
  * Converts an RGB(a) value to HEX
@@ -57,6 +59,16 @@ function sanitizeName(name: string) {
 }
 
 /**
+ * Checks if the name of a collection, group or variable is private.
+ *
+ * @param collection Name of the collection
+ * @returns True if private
+ */
+function isPrivate(collection: string) {
+  return collection.startsWith('_');
+}
+
+/**
  * Map Figma ids to names of variables and collections
  *
  * @param nodesWithNames Collection of variables
@@ -84,37 +96,70 @@ function uniqueKeyIdMaps<T extends Pick<VariableCollection, 'name'>, K extends k
 /**
  * Convert single variable to Design Token (W3C) standard
  *
+ * @param name Name of the current variable
  * @param value Value of the current variable
- * @param resolvedType Type of current variable
- * @param collectionIdToKeyMap Get the name of the current collection
+ * @param type Type of current variable
  * @returns Value of the variable in Design Token (W3C) standard
  */
 async function valueToJSON(
+  name: string,
   value: VariableValue,
-  resolvedType: VariableResolvedDataType,
-  collectionIdToKeyMap: Record<string, string>,
-) {
+  type: VariableResolvedDataType,
+): Promise<DesignToken['value']> {
   const isAlias = (
     v: VariableValue,
   ): v is VariableAlias => !!(v as VariableAlias).type && !!(v as VariableAlias).id;
 
+  const isForeground = (
+    { name: _name }: Variable,
+  ): boolean => !!_name.match(/^Foreground\/(Dark|Light)\/(Primary|Secondary|Disabled)$/);
+
+  const isColorPalette = (
+    { name: _name }: Variable,
+  ): boolean => !!_name.match(/^[A-Za-z]+\/\d+\/Background$/);
+
+  let _value: DesignToken['value'];
+
+  // If the variable is a reference to another variable
   if (isAlias(value)) {
+    // Get the referenced variable
     const variable = (await figma.variables.getVariableByIdAsync(value.id))!;
-    const prefix = collectionIdToKeyMap[variable.variableCollectionId];
-    return `{${prefix}.${variable.name.replace(/\//g, '.')}}`;
+    const alias = `{${variable.name.replace(/\//g, '.')}}`;
+
+    _value = alias;
+
+    // Expand the referenced variable if it is a foreground variable
+    if (isForeground(variable)) {
+      _value = {
+        Primary: alias,
+        Secondary: alias.replace('Primary', 'Secondary'),
+        Disabled: alias.replace('Primary', 'Disabled'),
+      };
+    }
+
+    // Expand the referenced variable if it is a reference to the color palette
+    // If the current variable is a foreground color, do not expand it to avoid circular references
+    if (isColorPalette(variable) && !isForeground({ name } as Variable)) {
+      _value = {
+        Background: alias,
+        Foreground: alias.replace('Background', 'Foreground'),
+      };
+    }
+  } else {
+    // Return an actual value if the variable is not a reference
+    _value = type === 'COLOR' ? rgbToHex(value as RGBA) : value as string;
   }
-  return resolvedType === 'COLOR' ? rgbToHex(value as RGBA) : value;
+
+  return _value;
 }
 
 /**
  * Converts collection to Design Token (W3C) standard
  *
- * @param collectionIdToKeyMap Get the name of the current collection
  * @param collection The variable collection to export
  * @returns The collection in the Design Token (W3C) format
  */
 async function collectionAsJSON(
-  collectionIdToKeyMap: Record<string, string>,
   { modes, variableIds }: VariableCollection,
 ) {
   const collection: Record<string, Tree> = {};
@@ -125,7 +170,7 @@ async function collectionAsJSON(
     collection[mode] = collection[mode] || {};
   });
 
-  for (const variableId of variableIds) {
+  variables: for (const variableId of variableIds) {
     const {
       name,
       resolvedType,
@@ -137,14 +182,17 @@ async function collectionAsJSON(
       const value = valuesByMode[keyToId[mode]];
 
       if (value !== undefined && ['COLOR', 'FLOAT'].includes(resolvedType)) {
-        name.split('/').forEach((groupName) => {
+        const groups = name.split('/');
+        if (groups.some((group) => isPrivate(group))) continue variables;
+
+        groups.forEach((groupName) => {
           obj = obj as Node;
           obj[groupName] = obj[groupName] || {};
           obj = obj[groupName];
         });
 
-        obj.$type = resolvedType === 'COLOR' ? 'color' : 'number';
-        obj.$value = await valueToJSON(value, resolvedType, collectionIdToKeyMap);
+        obj.value = await valueToJSON(name, value, resolvedType);
+        obj.type = (resolvedType === 'COLOR' ? 'color' : 'number') as DesignTokenType;
       }
     }
   }
@@ -202,7 +250,12 @@ async function exportToJSON() {
   const { idToKey } = uniqueKeyIdMaps(collections, 'id', KEY_PREFIX_COLLECTION);
 
   for (const collection of collections) {
-    tree[idToKey[collection.id]] = await collectionAsJSON(idToKey, collection);
+    const name = idToKey[collection.id];
+
+    // Skip this collection if private
+    if (isPrivate(name)) continue;
+
+    tree[name] = await collectionAsJSON(collection);
   }
 
   exportFiles(tree);
